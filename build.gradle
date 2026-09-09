@@ -1,0 +1,80 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.0.2'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.jira'
+version = '0.0.1-SNAPSHOT'
+description = 'bitbucket-flow-app'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['backend/src/main/java']
+        }
+        resources {
+            srcDirs = ['backend/src/main/resources']
+        }
+    }
+    test {
+        java {
+            srcDirs = ['backend/src/test/java']
+        }
+        resources {
+            srcDirs = ['backend/src/test/resources']
+        }
+    }
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    implementation 'org.springframework.boot:spring-boot-starter-json'
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+    runtimeOnly 'com.mysql:mysql-connector-j'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+def frontendDir = file('frontend')
+def frontendNodeModulesDir = file("$frontendDir/node_modules")
+def frontendDistDir = file("$frontendDir/dist")
+def npmExecutable = file('/usr/local/bin/npm').exists() ? '/usr/local/bin/npm' : 'npm'
+
+tasks.register('npmInstallFrontend', Exec) {
+    workingDir frontendDir
+    commandLine npmExecutable, 'install'
+    onlyIf { !frontendNodeModulesDir.exists() }
+}
+
+tasks.register('buildFrontend', Exec) {
+    dependsOn tasks.named('npmInstallFrontend')
+    workingDir frontendDir
+    commandLine npmExecutable, 'run', 'build'
+    inputs.dir frontendDir
+    outputs.dir frontendDistDir
+}
+
+tasks.named('processResources') {
+    dependsOn tasks.named('buildFrontend')
+    from(frontendDistDir) {
+        into 'static'
+    }
+}
+
+tasks.named('bootRun') {
+    dependsOn tasks.named('processResources')
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
