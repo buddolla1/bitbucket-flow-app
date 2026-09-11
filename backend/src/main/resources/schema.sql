@@ -1,3 +1,7 @@
+DROP TABLE IF EXISTS bitbucket_user_repo_activity;
+DROP TABLE IF EXISTS bitbucket_repository;
+DROP TABLE IF EXISTS bitbucket_project;
+
 CREATE TABLE IF NOT EXISTS jira_issue_record (
     id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     issue_id VARCHAR(64),
