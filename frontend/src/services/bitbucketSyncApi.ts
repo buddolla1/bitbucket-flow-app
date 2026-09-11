@@ -1,5 +1,6 @@
 import type {
-  BitbucketPrRecord,
+  BitbucketPrAnalyticsPage,
+  BitbucketPrAnalyticsQuery,
   BitbucketSyncRequest,
   BitbucketSyncResult,
   ProjectOption,
@@ -63,7 +64,13 @@ export async function syncBitbucketData(payload: BitbucketSyncRequest): Promise<
   );
 }
 
-export async function fetchBitbucketPrRecords(projectId?: number): Promise<BitbucketPrRecord[]> {
-  const query = projectId ? `?projectId=${encodeURIComponent(String(projectId))}` : '';
-  return await readJson<BitbucketPrRecord[]>(await fetch(`/api/bitbucket/pull-requests${query}`));
+export async function fetchBitbucketPrRecords(query: BitbucketPrAnalyticsQuery): Promise<BitbucketPrAnalyticsPage> {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value).trim()) {
+      params.set(key, String(value));
+    }
+  });
+  const queryString = params.toString();
+  return await readJson<BitbucketPrAnalyticsPage>(await fetch(`/api/bitbucket/pull-requests${queryString ? `?${queryString}` : ''}`));
 }

@@ -62,3 +62,45 @@ export interface BitbucketPrRecord {
   cycleTimeDays: number | null;
   lastSyncedAt: string;
 }
+
+export interface BitbucketPrAnalyticsSummary {
+  total: number;
+  merged: number;
+  open: number;
+  staleOpen: number;
+  averageCycleDays: number | null;
+  medianCycleDays: number | null;
+  p90CycleDays: number | null;
+}
+
+export interface BitbucketPrAnalyticsOptions {
+  repositories: string[];
+  authors: string[];
+  states: string[];
+}
+
+export interface BitbucketPrAnalyticsPage {
+  records: BitbucketPrRecord[];
+  totalRecords: number;
+  page: number;
+  size: number;
+  totalPages: number;
+  summary: BitbucketPrAnalyticsSummary;
+  options: BitbucketPrAnalyticsOptions;
+}
+
+export interface BitbucketPrAnalyticsQuery {
+  projectId?: number;
+  repository?: string;
+  author?: string;
+  state?: string;
+  jira?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  mergedFrom?: string;
+  mergedTo?: string;
+  page?: number;
+  size?: number;
+  sort?: string;
+  direction?: 'asc' | 'desc';
+}

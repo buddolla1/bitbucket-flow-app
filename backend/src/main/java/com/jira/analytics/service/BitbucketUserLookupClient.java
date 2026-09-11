@@ -17,11 +17,15 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 public class BitbucketUserLookupClient {
+
+    private static final Logger log = LoggerFactory.getLogger(BitbucketUserLookupClient.class);
 
     private final BitbucketProperties properties;
     private final ObjectMapper objectMapper;
@@ -37,9 +41,11 @@ public class BitbucketUserLookupClient {
 
     public Optional<BitbucketUserMapping> resolveBitbucketUser(String sso) {
         if (!StringUtils.hasText(sso)) {
+            log.info("Skipping Bitbucket user lookup because SSO is blank");
             return Optional.empty();
         }
 
+        log.info("Resolving Bitbucket user mapping for sso={}", sso);
         String baseUrl = properties.getBaseUrl();
         if (!StringUtils.hasText(baseUrl)) {
             throw new IllegalStateException("Missing Bitbucket base URL. Set BITBUCKET_BASE_URL.");
@@ -62,7 +68,9 @@ public class BitbucketUserLookupClient {
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new IllegalStateException("Bitbucket user lookup failed with HTTP " + response.statusCode());
             }
-            return extractUserMapping(response.body());
+            Optional<BitbucketUserMapping> mapping = extractUserMapping(response.body());
+            log.info("Resolved Bitbucket user mapping for sso={} found={}", sso, mapping.isPresent());
+            return mapping;
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to resolve Bitbucket user mapping.", exception);
         } catch (InterruptedException exception) {

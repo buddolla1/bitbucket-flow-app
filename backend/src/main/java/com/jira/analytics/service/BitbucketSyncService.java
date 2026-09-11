@@ -3,6 +3,10 @@ package com.jira.analytics.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.jira.analytics.dto.AddProjectSsoRequest;
 import com.jira.analytics.config.BitbucketProperties;
+import com.jira.analytics.dto.BitbucketPrAnalyticsOptions;
+import com.jira.analytics.dto.BitbucketPrAnalyticsPage;
+import com.jira.analytics.dto.BitbucketPrAnalyticsQuery;
+import com.jira.analytics.dto.BitbucketPrAnalyticsSummary;
 import com.jira.analytics.dto.BitbucketPrKey;
 import com.jira.analytics.dto.BitbucketPrRecord;
 import com.jira.analytics.dto.BitbucketSyncRequest;
@@ -32,14 +36,19 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 public class BitbucketSyncService {
 
+    private static final Logger log = LoggerFactory.getLogger(BitbucketSyncService.class);
+
     private static final Pattern JIRA_KEY_PATTERN = Pattern.compile("([A-Z][A-Z0-9]+-\\d+)");
     private static final List<String> REVIEW_ACTIONS = List.of("APPROVED", "COMMENTED", "REVIEWED", "ADDED_COMMENT");
+    private static final int STALE_OPEN_DAYS = 7;
 
     private final ProjectJdbcRepository projectRepository;
     private final SsoUserIdJdbcRepository ssoUserIdRepository;
@@ -68,22 +77,59 @@ public class BitbucketSyncService {
     }
 
     public List<ProjectOption> findProjects() {
-        return projectRepository.findAll();
+        List<ProjectOption> projects = projectRepository.findAll();
+        log.info("Returning {} projects", projects.size());
+        return projects;
     }
 
     public List<BitbucketPrRecord> findSyncedPullRequests(Long projectId) {
         if (projectId != null) {
             validateProject(projectId);
         }
-        return bitbucketPrJdbcRepository.findSyncedRecords(projectId);
+        List<BitbucketPrRecord> records = bitbucketPrJdbcRepository.findSyncedRecords(projectId);
+        log.info("Returning {} synced pull requests projectId={}", records.size(), projectId);
+        return records;
+    }
+
+    public BitbucketPrAnalyticsPage findPullRequestAnalytics(BitbucketPrAnalyticsQuery query) {
+        BitbucketPrAnalyticsQuery normalized = normalizeAnalyticsQuery(query);
+        log.info(
+                "Finding PR analytics projectId={} page={} size={} sort={} direction={}",
+                normalized.projectId(),
+                normalized.page(),
+                normalized.size(),
+                normalized.sort(),
+                normalized.direction()
+        );
+        if (normalized.projectId() != null) {
+            validateProject(normalized.projectId());
+        }
+        long total = bitbucketPrJdbcRepository.countAnalyticsRecords(normalized);
+        List<BitbucketPrRecord> records = bitbucketPrJdbcRepository.findAnalyticsRecords(normalized);
+        List<BitbucketPrRecord> summaryRecords = bitbucketPrJdbcRepository.findAnalyticsSummaryRecords(normalized);
+        int totalPages = total == 0 ? 0 : (int) Math.ceil((double) total / normalized.size());
+        BitbucketPrAnalyticsPage page = new BitbucketPrAnalyticsPage(
+                records,
+                total,
+                normalized.page(),
+                normalized.size(),
+                totalPages,
+                buildAnalyticsSummary(summaryRecords),
+                buildAnalyticsOptions(summaryRecords)
+        );
+        log.info("Returning PR analytics records={} totalRecords={} totalPages={}", records.size(), total, totalPages);
+        return page;
     }
 
     public List<ProjectSso> findProjectSsos(Long projectId) {
         validateProject(projectId);
-        return projectRepository.findSsosByProjectId(projectId);
+        List<ProjectSso> ssos = projectRepository.findSsosByProjectId(projectId);
+        log.info("Returning {} project SSOs projectId={}", ssos.size(), projectId);
+        return ssos;
     }
 
     public void addProjectSso(Long projectId, AddProjectSsoRequest request) {
+        log.info("Adding project SSO projectId={}", projectId);
         validateProject(projectId);
         if (request == null) {
             throw new IllegalArgumentException("SSO details are required.");
@@ -94,6 +140,7 @@ public class BitbucketSyncService {
     public BitbucketSyncResult sync(BitbucketSyncRequest request) {
         OffsetDateTime syncedAt = OffsetDateTime.now(ZoneOffset.UTC);
         boolean fullRefresh = request != null && Boolean.TRUE.equals(request.fullRefresh());
+        log.info("Starting Bitbucket sync fullRefresh={}", fullRefresh);
 
         ProjectOption project = validateProject(request == null ? null : request.projectId());
         DateRange dateRange = normalizeDateRange(request == null ? null : request.fromDate(), request == null ? null : request.toDate());
@@ -101,6 +148,7 @@ public class BitbucketSyncService {
         if (selectedSsos.isEmpty()) {
             throw new IllegalStateException("Select at least one SSO before syncing Bitbucket data.");
         }
+        log.info("Normalized sync request projectId={} selectedSsoCount={}", project.projectId(), selectedSsos.size());
 
         List<String> projectSsos = projectRepository.findSsosByProjectId(project.projectId()).stream()
                 .map(ProjectSso::sso)
@@ -110,6 +158,7 @@ public class BitbucketSyncService {
         if (selectedSsos.isEmpty()) {
             throw new IllegalStateException("Selected SSOs do not belong to the chosen project.");
         }
+        log.info("Validated sync SSOs projectId={} allowedSsoCount={} selectedSsoCount={}", project.projectId(), allowedSsos.size(), selectedSsos.size());
 
         List<SyncError> errors = new ArrayList<>();
         Map<String, BitbucketUserMapping> resolvedUsers = resolveUsers(project.projectId(), selectedSsos, fullRefresh, errors);
@@ -118,6 +167,7 @@ public class BitbucketSyncService {
                 .toList();
 
         if (usersToScan.isEmpty()) {
+            log.info("No Bitbucket users resolved for sync projectId={} errors={}", project.projectId(), errors.size());
             return buildResult(
                     "PARTIAL_SUCCESS",
                     project.projectId(),
@@ -147,7 +197,7 @@ public class BitbucketSyncService {
         );
 
         BitbucketPrJdbcRepository.PersistedCounts persistedCounts = bitbucketPrJdbcRepository.saveOrUpdateAll(normalized);
-        return buildResult(
+        BitbucketSyncResult result = buildResult(
                 errors.isEmpty() ? "SUCCESS" : "PARTIAL_SUCCESS",
                 project.projectId(),
                 selectedSsos.size(),
@@ -159,6 +209,17 @@ public class BitbucketSyncService {
                 errors,
                 syncedAt
         );
+        log.info(
+                "Completed Bitbucket sync projectId={} status={} discovered={} normalized={} inserted={} updated={} errors={}",
+                project.projectId(),
+                result.status(),
+                discovered.size(),
+                normalized.size(),
+                persistedCounts.inserted(),
+                persistedCounts.updated(),
+                errors.size()
+        );
+        return result;
     }
 
     private Map<BitbucketPrKey, DiscoveryCandidate> discoverPullRequests(
@@ -171,6 +232,7 @@ public class BitbucketSyncService {
         }
 
         int concurrency = Math.max(1, properties.getSyncConcurrency());
+        log.info("Discovering pull requests userCount={} concurrency={}", usersToScan.size(), concurrency);
         ExecutorService executor = Executors.newFixedThreadPool(concurrency);
         try {
             List<Future<UserPullRequestScanResult>> futures = new ArrayList<>();
@@ -192,6 +254,7 @@ public class BitbucketSyncService {
             executor.shutdownNow();
         }
 
+        log.info("Discovered {} unique Bitbucket pull requests errors={}", discovered.size(), errors.size());
         return discovered;
     }
 
@@ -209,6 +272,7 @@ public class BitbucketSyncService {
         }
 
         int concurrency = Math.min(candidates.size(), Math.max(1, properties.getSyncConcurrency()));
+        log.info("Enriching pull requests candidateCount={} concurrency={}", candidates.size(), concurrency);
         ExecutorService executor = Executors.newFixedThreadPool(concurrency);
         CompletionService<PrEnrichmentResult> completionService = new ExecutorCompletionService<>(executor);
         try {
@@ -234,6 +298,7 @@ public class BitbucketSyncService {
                     errors.add(new SyncError("PR_ENRICHMENT", safeMessage(exception)));
                 }
             }
+            log.info("Enriched {} pull requests errors={}", records.size(), errors.size());
             return records;
         } finally {
             executor.shutdownNow();
@@ -288,6 +353,7 @@ public class BitbucketSyncService {
             BitbucketPrKey key = new BitbucketPrKey(projectKey, repoSlug, prId);
             deduped.putIfAbsent(key, new DiscoveryCandidate(key, repository, pr, user));
         }
+        log.info("Scanned user pull requests user={} candidates={}", user.preferredAuthorFilter(), deduped.size());
         return new UserPullRequestScanResult(new ArrayList<>(deduped.values()));
     }
 
@@ -471,6 +537,7 @@ public class BitbucketSyncService {
         }
 
         int concurrency = Math.min(selectedSsos.size(), Math.max(1, properties.getSyncConcurrency()));
+        log.info("Resolving Bitbucket users selectedSsoCount={} concurrency={} fullRefresh={}", selectedSsos.size(), concurrency, fullRefresh);
         ExecutorService executor = Executors.newFixedThreadPool(concurrency);
         CompletionService<UserResolutionResult> completionService = new ExecutorCompletionService<>(executor);
         try {
@@ -497,21 +564,25 @@ public class BitbucketSyncService {
         } finally {
             executor.shutdownNow();
         }
+        log.info("Resolved {} Bitbucket users errors={}", resolved.size(), errors.size());
         return resolved;
     }
 
     private UserResolutionResult resolveUser(Long projectId, String sso, boolean fullRefresh) {
         Optional<SsoUserIdJdbcRepository.SsoUserIdMapping> existing = ssoUserIdRepository.findByProjectIdAndSso(projectId, sso);
         if (!fullRefresh && existing.isPresent() && toUserMapping(existing.get()).isValid() && !isMappingStale(existing.get())) {
+            log.info("Using cached Bitbucket user mapping projectId={} sso={}", projectId, sso);
             return new UserResolutionResult(sso, toUserMapping(existing.get()), null);
         }
 
         try {
             Optional<BitbucketUserMapping> lookup = bitbucketUserLookupClient.resolveBitbucketUser(sso);
             if (lookup.isEmpty()) {
+                log.info("Bitbucket user mapping not found projectId={} sso={}", projectId, sso);
                 return new UserResolutionResult(sso, null, new SyncError(sso, "Unable to resolve Bitbucket user mapping"));
             }
             SsoUserIdJdbcRepository.SsoUserIdMapping saved = ssoUserIdRepository.saveOrUpdate(projectId, sso, lookup.get());
+            log.info("Resolved and saved Bitbucket user mapping projectId={} sso={}", projectId, sso);
             return new UserResolutionResult(sso, new BitbucketUserMapping(
                     saved.bitbucketUserId(),
                     saved.bitbucketUsername(),
@@ -519,6 +590,7 @@ public class BitbucketSyncService {
                     saved.lastResolvedAt()
             ), null);
         } catch (Exception exception) {
+            log.info("Failed to resolve Bitbucket user mapping projectId={} sso={} error={}", projectId, sso, safeMessage(exception));
             return new UserResolutionResult(sso, null, new SyncError(sso, safeMessage(exception)));
         }
     }
@@ -547,8 +619,10 @@ public class BitbucketSyncService {
         if (projectId == null) {
             throw new IllegalStateException("Select a project before syncing Bitbucket data.");
         }
-        return projectRepository.findById(projectId)
+        ProjectOption project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new IllegalStateException("Unknown project id: " + projectId));
+        log.info("Validated project projectId={} projectKey={}", project.projectId(), project.projectKey());
+        return project;
     }
 
     private DateRange normalizeDateRange(String fromDate, String toDate) {
@@ -819,6 +893,91 @@ public class BitbucketSyncService {
 
     private boolean sameUser(String left, String right) {
         return StringUtils.hasText(left) && StringUtils.hasText(right) && left.trim().equalsIgnoreCase(right.trim());
+    }
+
+    private BitbucketPrAnalyticsQuery normalizeAnalyticsQuery(BitbucketPrAnalyticsQuery query) {
+        int page = query == null ? 0 : Math.max(0, query.page());
+        int size = query == null ? 25 : Math.max(1, Math.min(200, query.size()));
+        return new BitbucketPrAnalyticsQuery(
+                query == null ? null : query.projectId(),
+                normalizeNullableText(query == null ? null : query.repository()),
+                normalizeNullableText(query == null ? null : query.author()),
+                normalizeNullableText(query == null ? null : query.state()),
+                normalizeNullableText(query == null ? null : query.jira()),
+                query == null ? null : query.createdFrom(),
+                query == null ? null : query.createdTo(),
+                query == null ? null : query.mergedFrom(),
+                query == null ? null : query.mergedTo(),
+                page,
+                size,
+                normalizeNullableText(query == null ? null : query.sort()),
+                normalizeNullableText(query == null ? null : query.direction())
+        );
+    }
+
+    private BitbucketPrAnalyticsSummary buildAnalyticsSummary(List<BitbucketPrRecord> records) {
+        List<Double> cycleValues = records.stream()
+                .map(BitbucketPrRecord::cycleTimeDays)
+                .filter(value -> value != null && Double.isFinite(value))
+                .sorted()
+                .toList();
+        double totalCycle = cycleValues.stream().mapToDouble(Double::doubleValue).sum();
+        return new BitbucketPrAnalyticsSummary(
+                records.size(),
+                records.stream().filter(record -> "MERGED".equalsIgnoreCase(normalizeText(record.state()))).count(),
+                records.stream().filter(record -> !"MERGED".equalsIgnoreCase(normalizeText(record.state()))).count(),
+                records.stream().filter(this::isStaleOpenPullRequest).count(),
+                cycleValues.isEmpty() ? null : totalCycle / cycleValues.size(),
+                percentile(cycleValues, 0.50),
+                percentile(cycleValues, 0.90)
+        );
+    }
+
+    private BitbucketPrAnalyticsOptions buildAnalyticsOptions(List<BitbucketPrRecord> records) {
+        return new BitbucketPrAnalyticsOptions(
+                records.stream()
+                        .map(BitbucketPrRecord::repoSlug)
+                        .filter(StringUtils::hasText)
+                        .distinct()
+                        .sorted()
+                        .toList(),
+                records.stream()
+                        .map(this::displayAuthor)
+                        .filter(StringUtils::hasText)
+                        .distinct()
+                        .sorted()
+                        .toList(),
+                records.stream()
+                        .map(BitbucketPrRecord::state)
+                        .filter(StringUtils::hasText)
+                        .distinct()
+                        .sorted()
+                        .toList()
+        );
+    }
+
+    private boolean isStaleOpenPullRequest(BitbucketPrRecord record) {
+        if ("MERGED".equalsIgnoreCase(normalizeText(record.state()))) {
+            return false;
+        }
+        OffsetDateTime start = record.cycleStart() != null ? record.cycleStart() : record.prCreatedAt();
+        return start != null && start.plusDays(STALE_OPEN_DAYS).isBefore(OffsetDateTime.now(ZoneOffset.UTC));
+    }
+
+    private Double percentile(List<Double> sortedValues, double percentile) {
+        if (sortedValues.isEmpty()) {
+            return null;
+        }
+        int index = (int) Math.ceil(percentile * sortedValues.size()) - 1;
+        return sortedValues.get(Math.max(0, Math.min(sortedValues.size() - 1, index)));
+    }
+
+    private String displayAuthor(BitbucketPrRecord record) {
+        return firstNonBlank(record.authorName(), record.authorUsername(), record.authorUserId(), "Unknown");
+    }
+
+    private String normalizeNullableText(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
     }
 
     private OffsetDateTime firstDateTime(JsonNode primary, JsonNode secondary, String... pathCandidates) {

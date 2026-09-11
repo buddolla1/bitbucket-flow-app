@@ -15,11 +15,15 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 public class BitbucketApiClient {
+
+    private static final Logger log = LoggerFactory.getLogger(BitbucketApiClient.class);
 
     private final BitbucketProperties properties;
     private final ObjectMapper objectMapper;
@@ -35,9 +39,11 @@ public class BitbucketApiClient {
 
     public List<JsonNode> getUserPullRequests(String userName) {
         if (!StringUtils.hasText(userName)) {
+            log.info("Skipping user pull request lookup because userName is blank");
             return List.of();
         }
 
+        log.info("Fetching Bitbucket pull requests for user={}", userName);
         Map<String, List<String>> params = new LinkedHashMap<>();
         params.put("state", List.of("ALL"));
         params.put("limit", List.of(String.valueOf(properties.getPageSize())));
@@ -46,14 +52,17 @@ public class BitbucketApiClient {
     }
 
     public JsonNode getPullRequest(String projectKey, String repoSlug, long prId) {
+        log.info("Fetching Bitbucket pull request detail projectKey={} repoSlug={} prId={}", projectKey, repoSlug, prId);
         return fetchJson(resolveDetailPath(projectKey, repoSlug, prId), Map.of());
     }
 
     public List<JsonNode> getPullRequestCommits(String projectKey, String repoSlug, long prId) {
+        log.info("Fetching Bitbucket pull request commits projectKey={} repoSlug={} prId={}", projectKey, repoSlug, prId);
         return fetchPagedValues(resolveDetailPath(projectKey, repoSlug, prId) + "/commits", Map.of("limit", List.of(String.valueOf(properties.getPageSize()))));
     }
 
     public List<JsonNode> getPullRequestActivities(String projectKey, String repoSlug, long prId) {
+        log.info("Fetching Bitbucket pull request activities projectKey={} repoSlug={} prId={}", projectKey, repoSlug, prId);
         return fetchPagedValues(resolveDetailPath(projectKey, repoSlug, prId) + "/activities", Map.of("limit", List.of(String.valueOf(properties.getPageSize()))));
     }
 
@@ -85,6 +94,7 @@ public class BitbucketApiClient {
             }
         }
 
+        log.info("Fetched {} Bitbucket values from path={}", values.size(), path);
         return values;
     }
 
@@ -95,6 +105,7 @@ public class BitbucketApiClient {
         }
 
         URI uri = URI.create(baseUrl.replaceAll("/+$", "") + path + toQueryString(queryParams));
+        log.info("Calling Bitbucket REST API path={}", path);
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(30))
                 .GET()

@@ -5,6 +5,8 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,6 +14,8 @@ import org.springframework.util.StringUtils;
 
 @Repository
 public class SsoUserIdJdbcRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(SsoUserIdJdbcRepository.class);
 
     private static final String SELECT_COLUMNS = "id, project_id, sso, bitbucket_user_id, bitbucket_username, bitbucket_slug, last_resolved_at";
 
@@ -40,7 +44,9 @@ public class SsoUserIdJdbcRepository {
                 projectId,
                 sso.trim()
         );
-        return rows.stream().findFirst();
+        Optional<SsoUserIdMapping> mapping = rows.stream().findFirst();
+        log.info("Lookup SSO mapping projectId={} sso={} found={}", projectId, sso.trim(), mapping.isPresent());
+        return mapping;
     }
 
     @Transactional
@@ -74,6 +80,7 @@ public class SsoUserIdJdbcRepository {
                         resolvedAt,
                         current.id()
                 );
+                log.info("Updated Bitbucket user mapping projectId={} sso={}", projectId, sso.trim());
                 return new SsoUserIdMapping(
                         current.id(),
                         projectId,
@@ -90,6 +97,7 @@ public class SsoUserIdJdbcRepository {
                     resolvedAt,
                     current.id()
             );
+            log.info("Refreshed Bitbucket user mapping timestamp projectId={} sso={}", projectId, sso.trim());
             return new SsoUserIdMapping(
                     current.id(),
                     projectId,
@@ -115,6 +123,7 @@ public class SsoUserIdJdbcRepository {
                 trimOrNull(mapping.bitbucketSlug()),
                 resolvedAt
         );
+        log.info("Inserted Bitbucket user mapping projectId={} sso={}", projectId, sso.trim());
         return findByProjectIdAndSso(projectId, sso).orElseThrow();
     }
 

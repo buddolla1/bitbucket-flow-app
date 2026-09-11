@@ -4,6 +4,8 @@ import com.jira.analytics.dto.ProjectOption;
 import com.jira.analytics.dto.ProjectSso;
 import java.util.List;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,6 +13,8 @@ import org.springframework.util.StringUtils;
 
 @Repository
 public class ProjectJdbcRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(ProjectJdbcRepository.class);
 
     private static final String SELECT_PROJECT_COLUMNS = "id, project_key, project_name";
 
@@ -23,7 +27,7 @@ public class ProjectJdbcRepository {
     @Transactional
     public List<ProjectOption> findAll() {
         ensureProjectsFromJiraIssues();
-        return jdbcTemplate.query(
+        List<ProjectOption> projects = jdbcTemplate.query(
                 "SELECT " + SELECT_PROJECT_COLUMNS + " FROM project ORDER BY project_name, project_key",
                 (rs, rowNum) -> new ProjectOption(
                         rs.getLong("id"),
@@ -31,6 +35,8 @@ public class ProjectJdbcRepository {
                         rs.getString("project_name")
                 )
         );
+        log.info("Loaded {} application projects", projects.size());
+        return projects;
     }
 
     @Transactional(readOnly = true)
@@ -47,7 +53,9 @@ public class ProjectJdbcRepository {
                 ),
                 projectId
         );
-        return rows.stream().findFirst();
+        Optional<ProjectOption> project = rows.stream().findFirst();
+        log.info("Lookup projectId={} found={}", projectId, project.isPresent());
+        return project;
     }
 
     @Transactional(readOnly = true)
@@ -58,7 +66,7 @@ public class ProjectJdbcRepository {
         }
 
         String projectKey = project.get().projectKey();
-        return jdbcTemplate.query(
+        List<ProjectSso> ssos = jdbcTemplate.query(
                 """
                 SELECT
                     sso,
@@ -90,6 +98,8 @@ public class ProjectJdbcRepository {
                 projectKey,
                 projectId
         ).stream().filter(item -> StringUtils.hasText(item.sso())).toList();
+        log.info("Loaded {} SSOs for projectId={}", ssos.size(), projectId);
+        return ssos;
     }
 
     @Transactional
@@ -114,6 +124,7 @@ public class ProjectJdbcRepository {
                 normalizedSso
         );
         if (existing != null && existing > 0) {
+            log.info("SSO already exists for projectId={}", projectId);
             return;
         }
 
@@ -122,6 +133,7 @@ public class ProjectJdbcRepository {
                 projectId,
                 normalizedSso
         );
+        log.info("Added SSO for projectId={}", projectId);
     }
 
     private void ensureProjectsFromJiraIssues() {
@@ -145,6 +157,7 @@ public class ProjectJdbcRepository {
         for (ProjectOption project : discoveredProjects) {
             saveOrUpdateByKey(project.projectKey(), project.projectName());
         }
+        log.info("Ensured {} Jira-discovered projects exist", discoveredProjects.size());
     }
 
     private ProjectOption saveOrUpdateByKey(String projectKey, String projectName) {
@@ -167,6 +180,7 @@ public class ProjectJdbcRepository {
                     projectKey.trim(),
                     normalizedName
             );
+            log.info("Inserted project projectKey={}", projectKey.trim());
         } else {
             ProjectOption current = existing.get(0);
             if (!normalizedName.equals(current.projectName())) {
@@ -175,6 +189,7 @@ public class ProjectJdbcRepository {
                         normalizedName,
                         current.projectId()
                 );
+                log.info("Updated project name projectId={}", current.projectId());
             }
         }
         return findByProjectKey(projectKey.trim()).orElseThrow();

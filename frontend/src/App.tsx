@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BarChart3, Check, Database, GitPullRequest, Loader2, Plus, RefreshCw, Server } from 'lucide-react';
+import { AlertTriangle, BarChart3, Check, ChevronLeft, ChevronRight, Database, Download, GitPullRequest, Loader2, Plus, RefreshCw, Server } from 'lucide-react';
 import {
   addProjectSso,
   fetchBitbucketPrRecords,
@@ -7,7 +7,7 @@ import {
   fetchProjects,
   syncBitbucketData,
 } from './services/bitbucketSyncApi';
-import type { BitbucketPrRecord, BitbucketSyncResult, ProjectOption, ProjectSso } from './types/bitbucketSync';
+import type { BitbucketPrAnalyticsPage, BitbucketPrRecord, BitbucketSyncResult, ProjectOption, ProjectSso, SyncError } from './types/bitbucketSync';
 
 type BusyState = 'idle' | 'loading' | 'saving-sso' | 'syncing' | 'loading-analytics';
 type PageMode = 'sync' | 'analytics';
@@ -18,11 +18,19 @@ export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [projectSsos, setProjectSsos] = useState<ProjectSso[]>([]);
   const [selectedSsos, setSelectedSsos] = useState<string[]>([]);
-  const [prRecords, setPrRecords] = useState<BitbucketPrRecord[]>([]);
+  const [analyticsPage, setAnalyticsPage] = useState<BitbucketPrAnalyticsPage | null>(null);
   const [repoFilter, setRepoFilter] = useState('');
   const [authorFilter, setAuthorFilter] = useState('');
   const [stateFilter, setStateFilter] = useState('');
   const [jiraFilter, setJiraFilter] = useState('');
+  const [createdFromFilter, setCreatedFromFilter] = useState('');
+  const [createdToFilter, setCreatedToFilter] = useState('');
+  const [mergedFromFilter, setMergedFromFilter] = useState('');
+  const [mergedToFilter, setMergedToFilter] = useState('');
+  const [analyticsPageIndex, setAnalyticsPageIndex] = useState(0);
+  const [analyticsPageSize, setAnalyticsPageSize] = useState(25);
+  const [analyticsSort, setAnalyticsSort] = useState('activity');
+  const [analyticsDirection, setAnalyticsDirection] = useState<'asc' | 'desc'>('desc');
   const [newSso, setNewSso] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -34,14 +42,12 @@ export function App() {
   const selectedProject = projects.find((project) => String(project.projectId) === selectedProjectId) ?? null;
   const isBusy = busyState !== 'idle';
   const canSync = Boolean(selectedProject) && selectedSsos.length > 0 && !isBusy;
-  const analyticsRows = useMemo(
-    () => filterPrRecords(prRecords, { repo: repoFilter, author: authorFilter, state: stateFilter, jira: jiraFilter }),
-    [prRecords, repoFilter, authorFilter, stateFilter, jiraFilter]
-  );
-  const analyticsSummary = useMemo(() => buildAnalyticsSummary(analyticsRows), [analyticsRows]);
-  const repoOptions = useMemo(() => uniqueSorted(prRecords.map((record) => record.repoSlug).filter(Boolean)), [prRecords]);
-  const authorOptions = useMemo(() => uniqueSorted(prRecords.map((record) => displayAuthor(record)).filter(Boolean)), [prRecords]);
-  const stateOptions = useMemo(() => uniqueSorted(prRecords.map((record) => record.state).filter(Boolean)), [prRecords]);
+  const analyticsRows = analyticsPage?.records ?? [];
+  const analyticsSummary = analyticsPage?.summary ?? null;
+  const repoOptions = analyticsPage?.options.repositories ?? [];
+  const authorOptions = analyticsPage?.options.authors ?? [];
+  const stateOptions = analyticsPage?.options.states ?? [];
+  const groupedErrors = useMemo(() => groupSyncErrors(syncResult?.errors ?? []), [syncResult]);
 
   useEffect(() => {
     void loadProjects();
@@ -51,14 +57,33 @@ export function App() {
     if (!selectedProjectId) {
       setProjectSsos([]);
       setSelectedSsos([]);
-      setPrRecords([]);
+      setAnalyticsPage(null);
       return;
     }
     void loadSsos(Number(selectedProjectId));
-    if (pageMode === 'analytics') {
-      void loadAnalytics(Number(selectedProjectId));
-    }
+    setAnalyticsPageIndex(0);
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (pageMode === 'analytics' && selectedProject) {
+      void loadAnalytics(selectedProject.projectId);
+    }
+  }, [
+    pageMode,
+    selectedProjectId,
+    repoFilter,
+    authorFilter,
+    stateFilter,
+    jiraFilter,
+    createdFromFilter,
+    createdToFilter,
+    mergedFromFilter,
+    mergedToFilter,
+    analyticsPageIndex,
+    analyticsPageSize,
+    analyticsSort,
+    analyticsDirection,
+  ]);
 
   async function runAction<T>(state: BusyState, action: () => Promise<T>, success: (result: T) => void) {
     setBusyState(state);
@@ -97,9 +122,23 @@ export function App() {
       setError('Select a project before loading analytics.');
       return;
     }
-    await runAction('loading-analytics', () => fetchBitbucketPrRecords(projectId), (records) => {
-      setPrRecords(records);
-      setMessage(records.length ? `${records.length} synced PR records loaded.` : 'No synced PR records found for this project.');
+    await runAction('loading-analytics', () => fetchBitbucketPrRecords({
+      projectId,
+      repository: repoFilter,
+      author: authorFilter,
+      state: stateFilter,
+      jira: jiraFilter,
+      createdFrom: createdFromFilter,
+      createdTo: createdToFilter,
+      mergedFrom: mergedFromFilter,
+      mergedTo: mergedToFilter,
+      page: analyticsPageIndex,
+      size: analyticsPageSize,
+      sort: analyticsSort,
+      direction: analyticsDirection,
+    }), (page) => {
+      setAnalyticsPage(page);
+      setMessage(page.totalRecords ? `${page.totalRecords} synced PR records match the filters.` : 'No synced PR records found for this project.');
     });
   }
 
@@ -144,9 +183,6 @@ export function App() {
 
   function showAnalytics() {
     setPageMode('analytics');
-    if (selectedProject) {
-      void loadAnalytics(selectedProject.projectId);
-    }
   }
 
   function clearAnalyticsFilters() {
@@ -154,6 +190,40 @@ export function App() {
     setAuthorFilter('');
     setStateFilter('');
     setJiraFilter('');
+    setCreatedFromFilter('');
+    setCreatedToFilter('');
+    setMergedFromFilter('');
+    setMergedToFilter('');
+    setAnalyticsPageIndex(0);
+  }
+
+  function updateAnalyticsFilter(setter: (value: string) => void, value: string) {
+    setter(value);
+    setAnalyticsPageIndex(0);
+  }
+
+  function handleSortChange(sort: string) {
+    if (sort === analyticsSort) {
+      setAnalyticsDirection((current) => (current === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setAnalyticsSort(sort);
+      setAnalyticsDirection('desc');
+    }
+    setAnalyticsPageIndex(0);
+  }
+
+  function exportAnalyticsCsv() {
+    if (!analyticsRows.length) {
+      return;
+    }
+    const csv = toCsv(analyticsRows);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `bitbucket-pr-analytics-page-${(analyticsPage?.page ?? 0) + 1}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -304,28 +374,44 @@ export function App() {
               <div className="analytics-filters">
                 <label>
                   <span>Repository</span>
-                  <select value={repoFilter} onChange={(event) => setRepoFilter(event.target.value)}>
+                  <select value={repoFilter} onChange={(event) => updateAnalyticsFilter(setRepoFilter, event.target.value)}>
                     <option value="">All repositories</option>
                     {repoOptions.map((repo) => <option key={repo} value={repo}>{repo}</option>)}
                   </select>
                 </label>
                 <label>
                   <span>Author</span>
-                  <select value={authorFilter} onChange={(event) => setAuthorFilter(event.target.value)}>
+                  <select value={authorFilter} onChange={(event) => updateAnalyticsFilter(setAuthorFilter, event.target.value)}>
                     <option value="">All authors</option>
                     {authorOptions.map((author) => <option key={author} value={author}>{author}</option>)}
                   </select>
                 </label>
                 <label>
                   <span>State</span>
-                  <select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}>
+                  <select value={stateFilter} onChange={(event) => updateAnalyticsFilter(setStateFilter, event.target.value)}>
                     <option value="">All states</option>
                     {stateOptions.map((state) => <option key={state} value={state}>{state}</option>)}
                   </select>
                 </label>
                 <label>
                   <span>Jira key</span>
-                  <input value={jiraFilter} onChange={(event) => setJiraFilter(event.target.value)} placeholder="ABC-123" />
+                  <input value={jiraFilter} onChange={(event) => updateAnalyticsFilter(setJiraFilter, event.target.value)} placeholder="ABC-123" />
+                </label>
+                <label>
+                  <span>Created from</span>
+                  <input type="date" value={createdFromFilter} onChange={(event) => updateAnalyticsFilter(setCreatedFromFilter, event.target.value)} />
+                </label>
+                <label>
+                  <span>Created to</span>
+                  <input type="date" value={createdToFilter} onChange={(event) => updateAnalyticsFilter(setCreatedToFilter, event.target.value)} />
+                </label>
+                <label>
+                  <span>Merged from</span>
+                  <input type="date" value={mergedFromFilter} onChange={(event) => updateAnalyticsFilter(setMergedFromFilter, event.target.value)} />
+                </label>
+                <label>
+                  <span>Merged to</span>
+                  <input type="date" value={mergedToFilter} onChange={(event) => updateAnalyticsFilter(setMergedToFilter, event.target.value)} />
                 </label>
                 <button type="button" className="secondary" onClick={clearAnalyticsFilters}>
                   Clear Filters
@@ -334,17 +420,40 @@ export function App() {
             </div>
 
             <section className="kpi-grid">
-              <KpiCard label="PRs" value={String(analyticsSummary.total)} />
-              <KpiCard label="Merged" value={String(analyticsSummary.merged)} />
-              <KpiCard label="Open" value={String(analyticsSummary.open)} />
-              <KpiCard label="Avg cycle" value={formatDays(analyticsSummary.averageCycleDays)} />
+              <KpiCard label="PRs" value={String(analyticsSummary?.total ?? 0)} />
+              <KpiCard label="Merged" value={String(analyticsSummary?.merged ?? 0)} />
+              <KpiCard label="Open" value={String(analyticsSummary?.open ?? 0)} />
+              <KpiCard label="Stale open" value={String(analyticsSummary?.staleOpen ?? 0)} />
+              <KpiCard label="Avg cycle" value={formatDays(analyticsSummary?.averageCycleDays)} />
+              <KpiCard label="Median cycle" value={formatDays(analyticsSummary?.medianCycleDays)} />
+              <KpiCard label="P90 cycle" value={formatDays(analyticsSummary?.p90CycleDays)} />
             </section>
 
             <section className="panel panel--wide">
               <div className="panel-header">
                 <div>
                   <div className="panel-title">Synced Records</div>
-                  <p className="panel-subtitle">{analyticsRows.length} of {prRecords.length} records shown.</p>
+                  <p className="panel-subtitle">
+                    {analyticsRows.length} of {analyticsPage?.totalRecords ?? 0} records shown.
+                  </p>
+                </div>
+                <div className="button-row">
+                  <label className="compact-field">
+                    <span>Rows</span>
+                    <select value={analyticsPageSize} onChange={(event) => {
+                      setAnalyticsPageSize(Number(event.target.value));
+                      setAnalyticsPageIndex(0);
+                    }}>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                      <option value={200}>200</option>
+                    </select>
+                  </label>
+                  <button type="button" className="secondary" onClick={exportAnalyticsCsv} disabled={!analyticsRows.length}>
+                    <Download size={16} />
+                    Export CSV
+                  </button>
                 </div>
               </div>
               <div className="table-wrap">
@@ -352,15 +461,15 @@ export function App() {
                   <thead>
                     <tr>
                       <th>PR</th>
-                      <th>Repository</th>
-                      <th>Author</th>
-                      <th>State</th>
-                      <th>Jira</th>
-                      <th>Created</th>
+                      <SortableTh label="Repository" sortKey="repo" activeSort={analyticsSort} direction={analyticsDirection} onSort={handleSortChange} />
+                      <SortableTh label="Author" sortKey="author" activeSort={analyticsSort} direction={analyticsDirection} onSort={handleSortChange} />
+                      <SortableTh label="State" sortKey="state" activeSort={analyticsSort} direction={analyticsDirection} onSort={handleSortChange} />
+                      <SortableTh label="Jira" sortKey="jira" activeSort={analyticsSort} direction={analyticsDirection} onSort={handleSortChange} />
+                      <SortableTh label="Created" sortKey="created" activeSort={analyticsSort} direction={analyticsDirection} onSort={handleSortChange} />
                       <th>First commit</th>
                       <th>First review</th>
-                      <th>Merged</th>
-                      <th>Cycle days</th>
+                      <SortableTh label="Merged" sortKey="merged" activeSort={analyticsSort} direction={analyticsDirection} onSort={handleSortChange} />
+                      <SortableTh label="Cycle days" sortKey="cycle" activeSort={analyticsSort} direction={analyticsDirection} onSort={handleSortChange} />
                     </tr>
                   </thead>
                   <tbody>
@@ -388,6 +497,29 @@ export function App() {
                   </tbody>
                 </table>
               </div>
+              <div className="pagination-bar">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setAnalyticsPageIndex((current) => Math.max(0, current - 1))}
+                  disabled={isBusy || analyticsPageIndex === 0}
+                >
+                  <ChevronLeft size={16} />
+                  Previous
+                </button>
+                <span>
+                  Page {(analyticsPage?.page ?? analyticsPageIndex) + 1} of {Math.max(analyticsPage?.totalPages ?? 0, 1)}
+                </span>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setAnalyticsPageIndex((current) => current + 1)}
+                  disabled={isBusy || !analyticsPage || analyticsPage.page + 1 >= analyticsPage.totalPages}
+                >
+                  Next
+                  <ChevronRight size={16} />
+                </button>
+              </div>
             </section>
           </section>
         )}
@@ -396,11 +528,16 @@ export function App() {
           <section className="panel">
             <div className="panel-title">Sync Errors</div>
             <div className="error-list">
-              {syncResult.errors.map((item, index) => (
-                <div key={`${item.sso}-${index}`}>
-                  <AlertTriangle size={16} />
-                  <span>{item.sso}: {item.error}</span>
-                </div>
+              {Object.entries(groupedErrors).map(([phase, items]) => (
+                <section key={phase} className="error-group">
+                  <div className="error-group__title">{phase}</div>
+                  {items.map((item, index) => (
+                    <div key={`${item.sso}-${index}`}>
+                      <AlertTriangle size={16} />
+                      <span>{item.sso}: {item.error}</span>
+                    </div>
+                  ))}
+                </section>
               ))}
             </div>
           </section>
@@ -442,43 +579,28 @@ function KpiCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function filterPrRecords(
-  records: BitbucketPrRecord[],
-  filters: { repo: string; author: string; state: string; jira: string }
-) {
-  const jiraSearch = filters.jira.trim().toLowerCase();
-  return records.filter((record) => {
-    if (filters.repo && record.repoSlug !== filters.repo) {
-      return false;
-    }
-    if (filters.author && displayAuthor(record) !== filters.author) {
-      return false;
-    }
-    if (filters.state && record.state !== filters.state) {
-      return false;
-    }
-    if (jiraSearch && !(record.jiraKey ?? '').toLowerCase().includes(jiraSearch)) {
-      return false;
-    }
-    return true;
-  });
-}
-
-function buildAnalyticsSummary(records: BitbucketPrRecord[]) {
-  const cycleValues = records
-    .map((record) => record.cycleTimeDays)
-    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
-  const totalCycle = cycleValues.reduce((sum, value) => sum + value, 0);
-  return {
-    total: records.length,
-    merged: records.filter((record) => (record.state ?? '').toUpperCase() === 'MERGED').length,
-    open: records.filter((record) => (record.state ?? '').toUpperCase() !== 'MERGED').length,
-    averageCycleDays: cycleValues.length ? totalCycle / cycleValues.length : null,
-  };
-}
-
-function uniqueSorted(values: string[]) {
-  return [...new Set(values.filter(Boolean))].sort((left, right) => left.localeCompare(right));
+function SortableTh({
+  label,
+  sortKey,
+  activeSort,
+  direction,
+  onSort,
+}: {
+  label: string;
+  sortKey: string;
+  activeSort: string;
+  direction: 'asc' | 'desc';
+  onSort: (sort: string) => void;
+}) {
+  const active = activeSort === sortKey;
+  return (
+    <th>
+      <button type="button" className="sort-button" onClick={() => onSort(sortKey)}>
+        {label}
+        <span>{active ? (direction === 'asc' ? 'up' : 'down') : ''}</span>
+      </button>
+    </th>
+  );
 }
 
 function displayAuthor(record: BitbucketPrRecord) {
@@ -505,4 +627,60 @@ function formatDays(value: number | null | undefined) {
     return '-';
   }
   return `${value.toFixed(1)}d`;
+}
+
+function groupSyncErrors(errors: SyncError[]) {
+  return errors.reduce<Record<string, SyncError[]>>((groups, item) => {
+    const phase = errorPhase(item.sso);
+    groups[phase] = [...(groups[phase] ?? []), item];
+    return groups;
+  }, {});
+}
+
+function errorPhase(source: string) {
+  if (source === 'USER_RESOLUTION') {
+    return 'User resolution';
+  }
+  if (source === 'USER_PR_SCAN') {
+    return 'Pull request discovery';
+  }
+  if (source.includes('/')) {
+    return 'Pull request enrichment';
+  }
+  return 'User mapping';
+}
+
+function toCsv(records: BitbucketPrRecord[]) {
+  const headers = [
+    'PR',
+    'Repository',
+    'Author',
+    'State',
+    'Jira',
+    'Created',
+    'First commit',
+    'First review',
+    'Merged',
+    'Cycle days',
+    'Title',
+  ];
+  const rows = records.map((record) => [
+    record.prId,
+    record.repoSlug,
+    displayAuthor(record),
+    record.state,
+    record.jiraKey,
+    record.prCreatedAt,
+    record.firstCommitAt,
+    record.firstReviewEngagementAt,
+    record.prMergedAt,
+    record.cycleTimeDays ?? '',
+    record.title,
+  ]);
+  return [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n');
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? '');
+  return `"${text.replaceAll('"', '""')}"`;
 }
