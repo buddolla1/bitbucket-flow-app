@@ -1,6 +1,7 @@
 package com.jira.analytics.service;
 
 import com.jira.analytics.dto.ProjectOption;
+import com.jira.analytics.dto.ProjectSso;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -50,35 +51,45 @@ public class ProjectJdbcRepository {
     }
 
     @Transactional(readOnly = true)
-    public List<String> findSsosByProjectId(Long projectId) {
+    public List<ProjectSso> findSsosByProjectId(Long projectId) {
         Optional<ProjectOption> project = findById(projectId);
         if (project.isEmpty()) {
             return List.of();
         }
 
         String projectKey = project.get().projectKey();
-        return jdbcTemplate.queryForList(
+        return jdbcTemplate.query(
                 """
-                SELECT DISTINCT sso
+                SELECT
+                    sso,
+                    COALESCE(NULLIF(TRIM(MIN(display_name)), ''), sso) AS display_name
                 FROM (
-                    SELECT COALESCE(NULLIF(TRIM(sso), ''), '') AS sso
+                    SELECT
+                        COALESCE(NULLIF(TRIM(sso), ''), '') AS sso,
+                        COALESCE(NULLIF(TRIM(assignee), ''), NULLIF(TRIM(sso), '')) AS display_name
                     FROM jira_issue_record
                     WHERE project_key = ?
                       AND sso IS NOT NULL
                       AND TRIM(sso) <> ''
                     UNION
-                    SELECT COALESCE(NULLIF(TRIM(sso), ''), '') AS sso
+                    SELECT
+                        COALESCE(NULLIF(TRIM(sso), ''), '') AS sso,
+                        COALESCE(NULLIF(TRIM(sso), ''), '') AS display_name
                     FROM sso_userid
                     WHERE project_id = ?
                       AND sso IS NOT NULL
                       AND TRIM(sso) <> ''
                 ) project_ssos
+                GROUP BY sso
                 ORDER BY sso
                 """,
-                String.class,
+                (rs, rowNum) -> new ProjectSso(
+                        rs.getString("display_name"),
+                        rs.getString("sso")
+                ),
                 projectKey,
                 projectId
-        ).stream().filter(StringUtils::hasText).toList();
+        ).stream().filter(item -> StringUtils.hasText(item.sso())).toList();
     }
 
     @Transactional

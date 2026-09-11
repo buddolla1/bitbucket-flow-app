@@ -47,12 +47,15 @@ public class BitbucketUserLookupClient {
 
         String encodedSso = URLEncoder.encode(sso.trim(), StandardCharsets.UTF_8);
         URI uri = URI.create(baseUrl.replaceAll("/+$", "") + properties.getUserLookupPath() + encodedSso);
-        HttpRequest request = HttpRequest.newBuilder(uri)
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(30))
                 .GET()
-                .header("Accept", "application/json")
-                .headers(optionalAuthorizationHeader())
-                .build();
+                .header("Accept", "application/json");
+        String authorization = BitbucketAuthSupport.basicAuthHeader(properties);
+        if (StringUtils.hasText(authorization)) {
+            requestBuilder.header("Authorization", authorization);
+        }
+        HttpRequest request = requestBuilder.build();
 
         try {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -112,13 +115,5 @@ public class BitbucketUserLookupClient {
 
     private String normalize(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
-    }
-
-    private String[] optionalAuthorizationHeader() {
-        String authorization = BitbucketAuthSupport.basicAuthHeader(properties);
-        if (!StringUtils.hasText(authorization)) {
-            return new String[0];
-        }
-        return new String[] {"Authorization", authorization};
     }
 }

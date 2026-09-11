@@ -46,33 +46,6 @@ CREATE TABLE IF NOT EXISTS sso_userid (
     KEY idx_sso_userid_bitbucket (bitbucket_user_id)
 );
 
-CREATE TABLE IF NOT EXISTS bitbucket_project (
-    project_key VARCHAR(255) NOT NULL PRIMARY KEY,
-    project_name VARCHAR(500),
-    active BOOLEAN DEFAULT TRUE,
-    last_discovered_at DATETIME(6)
-);
-
-CREATE TABLE IF NOT EXISTS bitbucket_repository (
-    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    project_key VARCHAR(255) NOT NULL,
-    repo_slug VARCHAR(500) NOT NULL,
-    repo_name VARCHAR(500),
-    active BOOLEAN DEFAULT TRUE,
-    last_discovered_at DATETIME(6),
-    UNIQUE KEY uk_bitbucket_repo (project_key, repo_slug)
-);
-
-CREATE TABLE IF NOT EXISTS bitbucket_user_repo_activity (
-    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    bitbucket_username VARCHAR(255) NOT NULL,
-    project_key VARCHAR(255) NOT NULL,
-    repo_slug VARCHAR(500) NOT NULL,
-    last_pr_seen_at DATETIME(6),
-    last_scanned_at DATETIME(6),
-    UNIQUE KEY uk_user_repo_activity (bitbucket_username, project_key, repo_slug)
-);
-
 CREATE TABLE IF NOT EXISTS bitbucket_pr (
     id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     application_project_id BIGINT,
@@ -103,4 +76,3 @@ CREATE TABLE IF NOT EXISTS bitbucket_pr (
     UNIQUE KEY uk_bitbucket_pr (project_key, repo_slug, pr_id),
     KEY idx_bitbucket_pr_project (application_project_id)
 );
-

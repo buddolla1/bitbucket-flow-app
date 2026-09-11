@@ -11,11 +11,6 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 @RestControllerAdvice
 public class RestExceptionHandler {
 
-    @ExceptionHandler(InvalidExcelException.class)
-    public ResponseEntity<ApiErrorResponse> handleInvalidExcel(InvalidExcelException exception) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new ApiErrorResponse(exception.getMessage()));
-    }
-
     @ExceptionHandler({
             IllegalArgumentException.class,
             IllegalStateException.class,

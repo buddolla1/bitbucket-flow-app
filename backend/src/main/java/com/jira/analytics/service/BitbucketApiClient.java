@@ -33,44 +33,16 @@ public class BitbucketApiClient {
                 .build();
     }
 
-    public List<JsonNode> discoverProjects() {
-        return fetchPagedValues("/rest/api/1.0/projects", Map.of("limit", List.of(String.valueOf(properties.getPageSize()))));
-    }
-
-    public List<JsonNode> discoverRepositories(String projectKey) {
-        if (!StringUtils.hasText(projectKey)) {
-            return List.of();
-        }
-        return fetchPagedValues(
-                "/rest/api/1.0/projects/" + encode(projectKey.trim()) + "/repos",
-                Map.of("limit", List.of(String.valueOf(properties.getPageSize())))
-        );
-    }
-
-    public List<JsonNode> searchPullRequests(String projectKey, String repoSlug, List<String> authorFilters) {
-        if (!StringUtils.hasText(projectKey) || !StringUtils.hasText(repoSlug)) {
+    public List<JsonNode> getUserPullRequests(String userName) {
+        if (!StringUtils.hasText(userName)) {
             return List.of();
         }
 
         Map<String, List<String>> params = new LinkedHashMap<>();
         params.put("state", List.of("ALL"));
         params.put("limit", List.of(String.valueOf(properties.getPageSize())));
-        params.put("role", List.of("AUTHOR"));
-        if (authorFilters != null) {
-            List<String> filtered = authorFilters.stream()
-                    .filter(StringUtils::hasText)
-                    .map(String::trim)
-                    .distinct()
-                    .toList();
-            if (!filtered.isEmpty()) {
-                params.put("participant", filtered);
-            }
-        }
 
-        return fetchPagedValues(
-                "/rest/api/1.0/projects/" + encode(projectKey.trim()) + "/repos/" + encode(repoSlug.trim()) + "/pull-requests",
-                params
-        );
+        return fetchPagedValues(resolveUserPullRequestsPath(userName.trim()), params);
     }
 
     public JsonNode getPullRequest(String projectKey, String repoSlug, long prId) {
@@ -123,12 +95,15 @@ public class BitbucketApiClient {
         }
 
         URI uri = URI.create(baseUrl.replaceAll("/+$", "") + path + toQueryString(queryParams));
-        HttpRequest request = HttpRequest.newBuilder(uri)
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(30))
                 .GET()
-                .header("Accept", "application/json")
-                .headers(optionalAuthorizationHeader())
-                .build();
+                .header("Accept", "application/json");
+        String authorization = BitbucketAuthSupport.basicAuthHeader(properties);
+        if (StringUtils.hasText(authorization)) {
+            requestBuilder.header("Authorization", authorization);
+        }
+        HttpRequest request = requestBuilder.build();
 
         try {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -174,6 +149,21 @@ public class BitbucketApiClient {
         return "/rest/api/1.0/projects/" + encode(projectKey) + "/repos/" + encode(repoSlug) + "/pull-requests/" + prId;
     }
 
+    private String resolveUserPullRequestsPath(String userName) {
+        String template = properties.getUserPullRequestsPathTemplate();
+        if (!StringUtils.hasText(template)) {
+            template = "/rest/awesome-graphs-api/latest/users/{user}/pull-requests";
+        }
+        String encodedUser = encode(userName);
+        if (template.contains("{user}")) {
+            return template.replace("{user}", encodedUser);
+        }
+        if (template.endsWith("/")) {
+            return template + encodedUser + "/pull-requests";
+        }
+        return template + "/" + encodedUser + "/pull-requests";
+    }
+
     private String toQueryString(Map<String, List<String>> queryParams) {
         if (queryParams == null || queryParams.isEmpty()) {
             return "";
@@ -197,13 +187,5 @@ public class BitbucketApiClient {
 
     private String encode(String value) {
         return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8);
-    }
-
-    private String[] optionalAuthorizationHeader() {
-        String authorization = BitbucketAuthSupport.basicAuthHeader(properties);
-        if (!StringUtils.hasText(authorization)) {
-            return new String[0];
-        }
-        return new String[] {"Authorization", authorization};
     }
 }

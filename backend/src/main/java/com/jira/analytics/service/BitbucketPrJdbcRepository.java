@@ -1,12 +1,9 @@
 package com.jira.analytics.service;
 
-import com.jira.analytics.dto.BitbucketPrKey;
 import com.jira.analytics.dto.BitbucketPrRecord;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,53 +41,22 @@ public class BitbucketPrJdbcRepository {
     }
 
     @Transactional(readOnly = true)
-    public Set<BitbucketPrKey> findAllExistingKeys(Long applicationProjectId) {
+    public List<BitbucketPrRecord> findSyncedRecords(Long applicationProjectId) {
         if (applicationProjectId == null) {
-            return Set.of();
-        }
-        List<BitbucketPrKey> rows = jdbcTemplate.query(
-                """
-                SELECT project_key, repo_slug, pr_id
-                FROM bitbucket_pr
-                WHERE COALESCE(application_project_id, project_id) = ?
-                """,
-                (rs, rowNum) -> new BitbucketPrKey(
-                        rs.getString("project_key"),
-                        rs.getString("repo_slug"),
-                        rs.getLong("pr_id")
-                ),
-                applicationProjectId
-        );
-        return new HashSet<>(rows);
-    }
-
-    @Transactional(readOnly = true)
-    public List<BitbucketPrRecord> findByProjectId(Long applicationProjectId) {
-        if (applicationProjectId == null) {
-            return List.of();
+            return jdbcTemplate.query(
+                    "SELECT " + SELECT_COLUMNS + " FROM bitbucket_pr ORDER BY COALESCE(pr_merged_at, pr_created_at, last_synced_at) DESC, repo_slug, pr_id DESC",
+                    (rs, rowNum) -> mapRow(rs)
+            );
         }
         return jdbcTemplate.query(
-                "SELECT " + SELECT_COLUMNS + " FROM bitbucket_pr WHERE COALESCE(application_project_id, project_id) = ? ORDER BY repo_slug, pr_id",
+                "SELECT " + SELECT_COLUMNS + " FROM bitbucket_pr WHERE COALESCE(application_project_id, project_id) = ? ORDER BY COALESCE(pr_merged_at, pr_created_at, last_synced_at) DESC, repo_slug, pr_id DESC",
                 (rs, rowNum) -> mapRow(rs),
                 applicationProjectId
         );
     }
 
-    @Transactional(readOnly = true)
-    public long countByProjectId(Long applicationProjectId) {
-        if (applicationProjectId == null) {
-            return 0L;
-        }
-        Long count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM bitbucket_pr WHERE COALESCE(application_project_id, project_id) = ?",
-                Long.class,
-                applicationProjectId
-        );
-        return count == null ? 0L : count;
-    }
-
     @Transactional
-    public void batchInsert(List<BitbucketPrRecord> records) {
+    void batchInsert(List<BitbucketPrRecord> records) {
         if (records == null || records.isEmpty()) {
             return;
         }
@@ -110,7 +76,7 @@ public class BitbucketPrJdbcRepository {
     }
 
     @Transactional
-    public void batchUpdate(List<BitbucketPrRecord> records) {
+    void batchUpdate(List<BitbucketPrRecord> records) {
         if (records == null || records.isEmpty()) {
             return;
         }

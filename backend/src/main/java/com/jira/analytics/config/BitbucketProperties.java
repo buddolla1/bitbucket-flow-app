@@ -9,11 +9,9 @@ public class BitbucketProperties {
     private String username;
     private String apiToken;
     private String userLookupPath = "/rest/api/1.0/users?filter=";
+    private String userPullRequestsPathTemplate = "/rest/awesome-graphs-api/latest/users/{user}/pull-requests";
     private int pageSize = 100;
-    private int catalogTtlHours = 24;
     private int syncConcurrency = 5;
-    private int fullScanDays = 7;
-    private int participantBatchSize = 25;
     private int userLookupTtlHours = 168;
 
     public String getBaseUrl() {
@@ -48,6 +46,14 @@ public class BitbucketProperties {
         this.userLookupPath = userLookupPath;
     }
 
+    public String getUserPullRequestsPathTemplate() {
+        return userPullRequestsPathTemplate;
+    }
+
+    public void setUserPullRequestsPathTemplate(String userPullRequestsPathTemplate) {
+        this.userPullRequestsPathTemplate = userPullRequestsPathTemplate;
+    }
+
     public int getPageSize() {
         return pageSize;
     }
@@ -56,36 +62,12 @@ public class BitbucketProperties {
         this.pageSize = pageSize;
     }
 
-    public int getCatalogTtlHours() {
-        return catalogTtlHours;
-    }
-
-    public void setCatalogTtlHours(int catalogTtlHours) {
-        this.catalogTtlHours = catalogTtlHours;
-    }
-
     public int getSyncConcurrency() {
         return syncConcurrency;
     }
 
     public void setSyncConcurrency(int syncConcurrency) {
         this.syncConcurrency = syncConcurrency;
-    }
-
-    public int getFullScanDays() {
-        return fullScanDays;
-    }
-
-    public void setFullScanDays(int fullScanDays) {
-        this.fullScanDays = fullScanDays;
-    }
-
-    public int getParticipantBatchSize() {
-        return participantBatchSize;
-    }
-
-    public void setParticipantBatchSize(int participantBatchSize) {
-        this.participantBatchSize = participantBatchSize;
     }
 
     public int getUserLookupTtlHours() {

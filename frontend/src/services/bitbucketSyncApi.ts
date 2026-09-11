@@ -1,5 +1,5 @@
 import type {
-  BitbucketCatalogRefreshResult,
+  BitbucketPrRecord,
   BitbucketSyncRequest,
   BitbucketSyncResult,
   ProjectOption,
@@ -39,16 +39,6 @@ export async function fetchProjects(): Promise<ProjectOption[]> {
   return await readJson<ProjectOption[]>(await fetch('/api/projects'));
 }
 
-export async function createProject(projectKey: string, projectName: string): Promise<ProjectOption> {
-  return await readJson<ProjectOption>(
-    await fetch('/api/projects', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectKey, projectName }),
-    })
-  );
-}
-
 export async function fetchProjectSsos(projectId: number): Promise<ProjectSso[]> {
   return await readJson<ProjectSso[]>(await fetch(`/api/projects/${projectId}/ssos`));
 }
@@ -63,12 +53,6 @@ export async function addProjectSso(projectId: number, sso: string): Promise<Pro
   );
 }
 
-export async function refreshBitbucketCatalog(): Promise<BitbucketCatalogRefreshResult> {
-  return await readJson<BitbucketCatalogRefreshResult>(
-    await fetch('/api/bitbucket/catalog/refresh', { method: 'POST' })
-  );
-}
-
 export async function syncBitbucketData(payload: BitbucketSyncRequest): Promise<BitbucketSyncResult> {
   return await readJson<BitbucketSyncResult>(
     await fetch('/api/bitbucket/sync', {
@@ -79,3 +63,7 @@ export async function syncBitbucketData(payload: BitbucketSyncRequest): Promise<
   );
 }
 
+export async function fetchBitbucketPrRecords(projectId?: number): Promise<BitbucketPrRecord[]> {
+  const query = projectId ? `?projectId=${encodeURIComponent(String(projectId))}` : '';
+  return await readJson<BitbucketPrRecord[]>(await fetch(`/api/bitbucket/pull-requests${query}`));
+}

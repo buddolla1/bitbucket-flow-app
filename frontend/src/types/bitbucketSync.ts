@@ -5,6 +5,7 @@ export interface ProjectOption {
 }
 
 export interface ProjectSso {
+  name: string;
   sso: string;
 }
 
@@ -26,9 +27,6 @@ export interface BitbucketSyncResult {
   projectId: number;
   ssosRequested: number;
   userIdsResolved: number;
-  catalogStatus: string;
-  projectsDiscovered: number;
-  repositoriesDiscovered: number;
   repositoriesScanned: number;
   prsDiscovered: number;
   prsInserted: number;
@@ -37,10 +35,30 @@ export interface BitbucketSyncResult {
   syncTime: string;
 }
 
-export interface BitbucketCatalogRefreshResult {
-  status: string;
-  projectsDiscovered: number;
-  repositoriesDiscovered: number;
-  refreshedAt: string;
+export interface BitbucketPrRecord {
+  id: number;
+  applicationProjectId: number;
+  projectKey: string;
+  projectName: string;
+  repositoryName: string;
+  repoSlug: string;
+  prId: number;
+  authorName: string;
+  authorUsername: string;
+  authorUserId: string;
+  title: string;
+  description: string;
+  sourceBranch: string;
+  destinationBranch: string;
+  state: string;
+  jiraKey: string;
+  jiraMappingSource: string;
+  prCreatedAt: string;
+  firstCommitAt: string;
+  firstReviewEngagementAt: string;
+  prMergedAt: string;
+  cycleStart: string;
+  cycleStartSource: string;
+  cycleTimeDays: number | null;
+  lastSyncedAt: string;
 }
-
